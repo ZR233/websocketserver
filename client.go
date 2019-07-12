@@ -5,7 +5,6 @@
 package websocketserver
 
 import (
-	"bytes"
 	"log"
 	"net/http"
 	"time"
@@ -51,26 +50,7 @@ type Client struct {
 	// Buffered channel of outbound messages.
 	send chan []byte
 
-	Id int64
-}
-
-type Clients struct {
-	list []*Client
-}
-
-func (c *Clients) append(client *Client) {
-	c.list = append(c.list, client)
-}
-func (c *Clients) remove(client *Client) {
-	if len(c.list) == 0 {
-		return
-	}
-	for i, v := range c.list {
-		if v == client {
-			c.list = append(c.list[:i], c.list[i+1:]...)
-			break
-		}
-	}
+	msgHandler func(*Client, []byte)
 }
 
 // readPump pumps messages from the websocket connection to the center.
@@ -94,8 +74,7 @@ func (c *Client) readPump() {
 			}
 			break
 		}
-		message = bytes.TrimSpace(bytes.Replace(message, newline, space, -1))
-		c.center.broadcast <- message
+		c.msgHandler(c, message)
 	}
 }
 
@@ -144,4 +123,8 @@ func (c *Client) writePump() {
 			}
 		}
 	}
+}
+
+func (c *Client) Send(message []byte) {
+	c.send <- message
 }

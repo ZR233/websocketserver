@@ -8,11 +8,13 @@ import (
 	"net/http"
 )
 
+type Clients map[*Client]bool
+
 // Center maintains the set of active Clients and broadcasts messages to the
 // Clients.
 type Center struct {
 	// Registered Clients.
-	clients map[*Client]bool
+	clients Clients
 
 	// Inbound messages from the Clients.
 	broadcast chan []byte
@@ -22,53 +24,54 @@ type Center struct {
 
 	// Unregister requests from Clients.
 	unregister chan *Client
+
+	msgHandler func(*Client, []byte)
 }
 
-func newCenter() *Center {
+func (c *Center) Clients() Clients {
+	return c.clients
+}
+
+func newCenter(msgHandler func(*Client, []byte)) *Center {
 	return &Center{
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 		clients:    make(map[*Client]bool),
+		msgHandler: msgHandler,
 	}
 }
 
-func (s *Center) run() {
+func (c *Center) Run() {
 	for {
 		select {
-		case client := <-s.register:
-			s.clients[client] = true
-		case client := <-s.unregister:
-			if _, ok := s.clients[client]; ok {
-				delete(s.clients, client)
+		case client := <-c.register:
+			c.clients[client] = true
+		case client := <-c.unregister:
+			if _, ok := c.clients[client]; ok {
+				delete(c.clients, client)
 				close(client.send)
 			}
-		case message := <-s.broadcast:
-			for client := range s.clients {
+		case message := <-c.broadcast:
+			for client := range c.clients {
 				select {
 				case client.send <- message:
 				default:
 					close(client.send)
-					delete(s.clients, client)
+					delete(c.clients, client)
 				}
 			}
 		}
 	}
 }
 
-func GetNewServer() *Center {
-	server := newCenter()
-	go server.run()
-	return server
-}
-
 // serveWs handles websocket requests from the peer.
-func (s *Center) NewClient(w http.ResponseWriter, r *http.Request) error {
+func (c *Center) NewClient(w http.ResponseWriter, r *http.Request) error {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return err
 	}
-	client := &Client{center: s, conn: conn, send: make(chan []byte, 256)}
+	client := &Client{center: c, conn: conn, send: make(chan []byte, 256), msgHandler: c.msgHandler}
 	client.center.register <- client
 
 	// Allow collection of memory referenced by the caller by doing all work in
