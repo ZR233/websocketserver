@@ -40,17 +40,48 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
+type MsgHandler func(ClientInterface, []byte)
+
+type ClientInterface interface {
+	new(id uint64, center *Center, conn *websocket.Conn, send *chan []byte, handler MsgHandler) ClientInterface
+	GetId() uint64
+	Delete()
+	run()
+}
+
 // Client is a middleman between the websocket connection and the center.
 type Client struct {
+	id uint64
+
 	center *Center
 
 	// The websocket connection.
 	conn *websocket.Conn
 
 	// Buffered channel of outbound messages.
-	send chan []byte
+	send *chan []byte
 
-	msgHandler func(*Client, []byte)
+	msgHandler func(ClientInterface, []byte)
+}
+
+func (c Client) new(id uint64, center *Center, conn *websocket.Conn, send *chan []byte, handler MsgHandler) ClientInterface {
+	c.id = id
+	c.center = center
+	c.conn = conn
+	c.send = send
+	c.msgHandler = handler
+	return c
+}
+
+func (c Client) GetId() uint64 {
+	return c.id
+}
+func (c Client) Delete() {
+	close(*c.send)
+}
+func (c Client) run() {
+	go c.writePump()
+	go c.readPump()
 }
 
 // readPump pumps messages from the websocket connection to the center.
@@ -58,9 +89,9 @@ type Client struct {
 // The application runs readPump in a per-connection goroutine. The application
 // ensures that there is at most one reader on a connection by executing all
 // reads from this goroutine.
-func (c *Client) readPump() {
+func (c Client) readPump() {
 	defer func() {
-		c.center.unregister <- c
+		c.center.unregister <- c.id
 		c.conn.Close()
 	}()
 	c.conn.SetReadLimit(maxMessageSize)
@@ -83,7 +114,7 @@ func (c *Client) readPump() {
 // A goroutine running writePump is started for each connection. The
 // application ensures that there is at most one writer to a connection by
 // executing all writes from this goroutine.
-func (c *Client) writePump() {
+func (c Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
@@ -92,7 +123,7 @@ func (c *Client) writePump() {
 	}()
 	for {
 		select {
-		case message, ok := <-c.send:
+		case message, ok := <-*c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if !ok {
 				// The center closed the channel.
@@ -107,10 +138,10 @@ func (c *Client) writePump() {
 			w.Write(message)
 
 			// Add queued chat messages to the current websocket message.
-			n := len(c.send)
+			n := len(*c.send)
 			for i := 0; i < n; i++ {
 				w.Write(newline)
-				w.Write(<-c.send)
+				w.Write(<-*c.send)
 			}
 
 			if err := w.Close(); err != nil {
@@ -126,5 +157,5 @@ func (c *Client) writePump() {
 }
 
 func (c *Client) Send(message []byte) {
-	c.send <- message
+	*c.send <- message
 }
