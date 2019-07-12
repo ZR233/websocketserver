@@ -1,4 +1,4 @@
-module websocketserver
+module github.com/ZR233/websocketserver
 
 go 1.12
 
