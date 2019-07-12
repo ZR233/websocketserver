@@ -1,4 +1,4 @@
-module WebSocketServer
+module websocketserver
 
 go 1.12
 
