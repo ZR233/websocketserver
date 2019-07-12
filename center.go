@@ -32,7 +32,7 @@ func (c *Center) Clients() Clients {
 	return c.clients
 }
 
-func newCenter(msgHandler func(*Client, []byte)) *Center {
+func NewCenter(msgHandler func(*Client, []byte)) *Center {
 	return &Center{
 		broadcast:  make(chan []byte),
 		register:   make(chan *Client),
